@@ -23,7 +23,6 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    # QUAN TRỌNG: Dùng debug=False và use_reloader=False để tránh Flask tự restart gây xung đột bot
     app_web.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
@@ -124,7 +123,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(header, parse_mode="Markdown", reply_markup=main_menu())
     return ConversationHandler.END
 
-# Luồng Mua Hàng (Gửi bill trước -> Nhập thông tin nhận tiền sau)
+# Luồng Mua Hàng
 async def on_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
@@ -150,20 +149,28 @@ async def on_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📸 *Bước 1:* Sau khi chuyển khoản xong, vui lòng gửi **ảnh chụp biên lai / màn hình chuyển khoản** trước:"
     )
 
+    cancel_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Hủy giao dịch", callback_data="huy")]
+    ])
+
     if state.get("qr_file_id"):
-        await query.message.reply_photo(photo=state["qr_file_id"], caption=caption, parse_mode="Markdown")
+        await query.message.reply_photo(photo=state["qr_file_id"], caption=caption, parse_mode="Markdown", reply_markup=cancel_markup)
     else:
-        await query.message.reply_text(caption, parse_mode="Markdown")
+        await query.message.reply_text(caption, parse_mode="Markdown", reply_markup=cancel_markup)
 
     return WAIT_PROOF
 
 async def on_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
-        await update.message.reply_text("❌ Vui lòng gửi một bức ảnh biên lai hợp lệ!")
+        await update.message.reply_text("❌ Vui lòng gửi một bức ảnh biên lai hợp lệ hoặc bấm /huy để hủy!")
         return WAIT_PROOF
         
     photo = update.message.photo[-1]
     ctx.user_data["photo_file_id"] = photo.file_id
+
+    cancel_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Hủy giao dịch", callback_data="huy")]
+    ])
 
     await update.message.reply_text(
         f"✅ Đã nhận được ảnh biên lai của bạn!\n\n"
@@ -171,6 +178,7 @@ async def on_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"`Tên Chủ Tài Khoản - Số Tài Khoản - Tên Ngân Hàng`\n"
         f"(Ví dụ: `NGUYEN VAN A - 0123456789 - VCB`)",
         parse_mode="Markdown",
+        reply_markup=cancel_markup
     )
     return WAIT_CUST_INFO
 
@@ -220,7 +228,11 @@ async def on_cust_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Đã hủy giao dịch hiện tại.")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text("❌ Đã hủy thao tác/giao dịch hiện tại.")
+    else:
+        await update.message.reply_text("❌ Đã hủy thao tác/giao dịch hiện tại.")
     return ConversationHandler.END
 
 # Quản trị viên (Admin)
@@ -247,16 +259,16 @@ async def admin_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if data == "adm_rate":
-        await query.message.reply_text("Nhập tỉ lệ mới (Ví dụ: `7.5` hoặc `8`):", parse_mode="Markdown")
+        await query.message.reply_text("Nhập tỉ lệ mới (Ví dụ: `7.5` hoặc `8`): gửi `/huy` để hủy.", parse_mode="Markdown")
         return WAIT_NEW_RATE
     elif data == "adm_options":
-        await query.message.reply_text("Nhập danh sách mức giá cách nhau bằng dấu phẩy (Ví dụ: `100000, 200000, 500000`):")
+        await query.message.reply_text("Nhập danh sách mức giá cách nhau bằng dấu phẩy (Ví dụ: `100000, 200000, 500000`): gửi `/huy` để hủy.")
         return WAIT_NEW_OPTIONS
     elif data == "adm_bank":
-        await query.message.reply_text("Nhập thông tin ngân hàng mới theo cú pháp:\n`TênNH | SốTK | ChủTK`", parse_mode="Markdown")
+        await query.message.reply_text("Nhập thông tin ngân hàng mới theo cú pháp:\n`TênNH | SốTK | ChủTK` (gửi `/huy` để hủy)", parse_mode="Markdown")
         return WAIT_BANK_INFO
     elif data == "adm_qr_info":
-        await query.message.reply_text("Gửi ảnh mã QR mới:")
+        await query.message.reply_text("Gửi ảnh mã QR mới (gửi `/huy` để hủy):")
         return WAIT_QR_IMAGE
     elif data == "adm_close":
         await query.message.delete()
@@ -292,13 +304,13 @@ async def admin_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif action == "ban":
         target_user_id = int(parts[1])
         ctx.user_data["ban_target"] = target_user_id
-        await query.message.reply_text("Nhập số ngày cấm (Nhập `0` để cấm vĩnh viễn):")
+        await query.message.reply_text("Nhập số ngày cấm (Nhập `0` để cấm vĩnh viễn, gửi `/huy` để hủy):")
         return WAIT_BAN_DAYS
 
     elif action == "warn":
         target_user_id = int(parts[1])
         ctx.user_data["warn_target"] = target_user_id
-        await query.message.reply_text("Nhập nội dung cảnh báo gửi cho user:")
+        await query.message.reply_text("Nhập nội dung cảnh báo gửi cho user (gửi `/huy` để hủy):")
         return WAIT_WARN_TEXT
 
 @admin_only
@@ -379,21 +391,30 @@ async def set_warn_text_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    # Khởi động Flask Server ngầm trên 1 thread riêng biệt cho Render
     web_thread = threading.Thread(target=run_web)
     web_thread.daemon = True
     web_thread.start()
 
-    # Khởi động Telegram Bot
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Thêm allow_reentry=True và hỗ trợ cả nút bấm / lệnh hủy (/huy, /cancel)
     buy_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(on_buy, pattern="^buy_")],
         states={
-            WAIT_PROOF: [MessageHandler(filters.PHOTO, on_proof)],
-            WAIT_CUST_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_cust_info)],
+            WAIT_PROOF: [
+                MessageHandler(filters.PHOTO, on_proof),
+                CallbackQueryHandler(on_buy, pattern="^buy_") # Cho phép chọn gói khác ngay lúc đang chờ bill
+            ],
+            WAIT_CUST_INFO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_cust_info),
+                CallbackQueryHandler(on_buy, pattern="^buy_") # Cho phép chọn gói khác ngay lúc đang chờ thông tin
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cmd_cancel)],
+        fallbacks=[
+            CommandHandler(["cancel", "huy"], cmd_cancel),
+            CallbackQueryHandler(cmd_cancel, pattern="^cancel$|^huy$")
+        ],
+        allow_reentry=True,
     )
 
     admin_conv = ConversationHandler(
@@ -406,16 +427,20 @@ def main():
             WAIT_BAN_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_ban_days_step)],
             WAIT_WARN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_warn_text_step)],
         },
-        fallbacks=[CommandHandler("cancel", cmd_cancel)],
+        fallbacks=[
+            CommandHandler(["cancel", "huy"], cmd_cancel),
+            CallbackQueryHandler(cmd_cancel, pattern="^cancel$|^huy$")
+        ],
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("huy", cmd_cancel)) # Lệnh /huy tổng quát ngoài conversation
     app.add_handler(buy_conv)
     app.add_handler(admin_conv)
 
     print("Bot đang chạy thành công!")
-    # drop_pending_updates=True giúp xóa toàn bộ thông điệp rác bị kẹt trước đó
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
