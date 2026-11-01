@@ -14,7 +14,7 @@ from telegram.ext import (
 
 logging.basicConfig(level=logging.INFO)
 
-# --- PHẦN WEB SERVER CHO RENDER ---
+# --- PHẦN WEB SERVER CHO RENDER (Chống Sleep & Fix lỗi tiến trình) ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
@@ -23,7 +23,8 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    app_web.run(host="0.0.0.0", port=port)
+    # QUAN TRỌNG: Dùng debug=False và use_reloader=False để tránh Flask tự restart gây xung đột bot
+    app_web.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
 # --- CẤU HÌNH BOT ---
@@ -157,6 +158,10 @@ async def on_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return WAIT_PROOF
 
 async def on_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("❌ Vui lòng gửi một bức ảnh biên lai hợp lệ!")
+        return WAIT_PROOF
+        
     photo = update.message.photo[-1]
     ctx.user_data["photo_file_id"] = photo.file_id
 
@@ -189,20 +194,23 @@ async def on_cust_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ])
 
     for admin_id in ADMIN_IDS:
-        await ctx.bot.send_photo(
-            chat_id=admin_id,
-            photo=photo_file_id,
-            caption=(
-                f"📸 *BIÊN LAI ĐƠN HÀNG* (`#ORD-{order_id}`)\n"
-                f"━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 Telegram: {user.full_name} (@{user.username or 'N/A'}) | `{user.id}`\n"
-                f"💵 Chuyển: `{fmt(amt)} VND` ➔ Nhận: `{fmt(dirty)} VND`\n"
-                f"🏦 **TT Nhận tiền của KH:**\n`{customer_info}`\n"
-                f"━━━━━━━━━━━━━━━━━━━"
-            ),
-            parse_mode="Markdown",
-            reply_markup=admin_markup
-        )
+        try:
+            await ctx.bot.send_photo(
+                chat_id=admin_id,
+                photo=photo_file_id,
+                caption=(
+                    f"📸 *BIÊN LAI ĐƠN HÀNG* (`#ORD-{order_id}`)\n"
+                    f"━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 Telegram: {user.full_name} (@{user.username or 'N/A'}) | `{user.id}`\n"
+                    f"💵 Chuyển: `{fmt(amt)} VND` ➔ Nhận: `{fmt(dirty)} VND`\n"
+                    f"🏦 **TT Nhận tiền của KH:**\n`{customer_info}`\n"
+                    f"━━━━━━━━━━━━━━━━━━━"
+                ),
+                parse_mode="Markdown",
+                reply_markup=admin_markup
+            )
+        except Exception as e:
+            logging.error(f"Không thể gửi tin cho admin {admin_id}: {e}")
 
     await update.message.reply_text(
         f"✅ *Hoàn tất gửi thông tin cho đơn `#ORD-{order_id}`!*\n"
@@ -310,7 +318,7 @@ async def set_options_step(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         opts = [int(x.strip()) for x in update.message.text.split(",")]
         state["options"] = opts
         save_state()
-        await update.message.reply_text(f"✅ Đã cập nhật mức giá thành công!")
+        await update.message.reply_text("✅ Đã cập nhật mức giá thành công!")
     except ValueError:
         await update.message.reply_text("❌ Định dạng không hợp lệ.")
     return ConversationHandler.END
@@ -407,7 +415,8 @@ def main():
     app.add_handler(admin_conv)
 
     print("Bot đang chạy thành công!")
-    app.run_polling()
+    # drop_pending_updates=True giúp xóa toàn bộ thông điệp rác bị kẹt trước đó
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
